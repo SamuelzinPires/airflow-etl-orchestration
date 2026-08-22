@@ -1,0 +1,26 @@
+# Pastas 
+Gerenciamento_Projeto/
+
+# Arquivos de configuração
+.env
+
+# Airflow 
+logs/
+airflow.db
+standalone_admin_password.txt
+
+# Python 
+__pycache__/
+*.py[cod]
+.venv/
+
+# IDE
+.vscode/
+desktop.ini
+Thumbs.db
+
+#  Airflow: gerado em runtime, não é código
+logs/
+config/airflow.cfg
+airflow.db
+standalone_admin_password.txt
