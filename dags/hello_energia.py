@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 import pendulum
+import requests
+import os
 
 from airflow.sdk import dag, task 
 
@@ -23,6 +25,30 @@ config_task = {
 
 )
 def hello_energia():
+
+    @task(
+        task_id="extrair_dados", #Identificador da task
+    )
+    def extrair_dados(ds=None): # data de execução extrai o ano da execução do DAG, por isso o parâmetro ds[:4] é passado para a função extrair_dados
+     logger.info("iniciando a extração dos dados do ONS") #log de início da extração dos dados do ONS
+
+     ano_execucao = ds[:4]  # Variavel que armazena o ano da execução do DAG, extraído do parâmetro ds[:4]
+     url_ons = f"https://ons-aws-prod-opendata.s3.amazonaws.com/dataset/balanco_energia_subsistema_ho/BALANCO_ENERGIA_SUBSISTEMA_2026.csv" #Define a URL do arquivo a ser lido, com base no ano da execução do DAG
+
+     request = requests.get(url_ons, stream=True) #Faz a requisição do arquivo CSV do ONS, com base na URL definida acima
+     request.raise_for_status()  #Verifica se a requisição foi bem sucedida, caso contrário, levanta uma exceção    
+
+     name_arquivo = f"ons_{ano_execucao}.csv" #Define o nome do arquivo a ser salvo, com base no ano da execução do DAG
+     caminho_arquivo = f"/opt/airflow/data/{name_arquivo}" #caminho do arquivo a ser salvo
+     os.makedirs(os.path.dirname(caminho_arquivo), exist_ok=True) #Cria a pasta data, caso não exista    
+
+     with open(caminho_arquivo, "wb") as arquivo: #Abre o arquivo para escrita em modo binário
+        for chunk in request.iter_content(chunk_size=8192): #Itera sobre o conteúdo do arquivo em blocos de 8192 bytes
+            if chunk: #Remove blocos vazios
+                arquivo.write(chunk) #Escreve o conteúdo do arquivo no disco
+     logger.info(f"Arquivo {name_arquivo} salvo com sucesso em {caminho_arquivo}") #Log de sucesso na gravação do arquivo
+     return caminho_arquivo #Retorna o caminho do arquivo salvo
+
 
     @task(
         task_id="carregar_dados", #Identificador da task
@@ -92,6 +118,7 @@ def hello_energia():
             pct_renovavel = registro["porcentagem_renovavel"] # Acessa o valor da porcentagem de energia renovável no dicionário
 
             logger.info(f"Subsistemas {sub}: Total={total}MW, Renovável={pct_renovavel}%") #Log dos dados transformados
+    caminho_csv = extrair_dados()
     dados_ons = carregar_dados() #Chama a task carregar_dados
     dados_transformados = processar_dados(dados_ons) #Chama a task processar_dados
     salvar_dados(dados_transformados) #Chama a task salvar_dados    

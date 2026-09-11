@@ -1,26 +1,23 @@
-# Pastas 
+# Pastas de anotação pessoal e dado gerado em runtime
 Gerenciamento_Projeto/
+data/
 
-# Arquivos de configuração
+# Segredos: NUNCA versionar
 .env
 
-# Airflow 
+# Airflow: gerado em runtime
 logs/
 airflow.db
 standalone_admin_password.txt
+config/airflow.cfg
 
-# Python 
+# Python
 __pycache__/
 *.py[cod]
 .venv/
+venv/
 
-# IDE
+# IDE / Windows
 .vscode/
 desktop.ini
 Thumbs.db
-
-#  Airflow: gerado em runtime, não é código
-logs/
-config/airflow.cfg
-airflow.db
-standalone_admin_password.txt
