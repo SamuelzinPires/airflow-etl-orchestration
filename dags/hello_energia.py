@@ -1,11 +1,11 @@
 from __future__ import annotations
+from airflow.sdk import dag, task 
 
 import logging
 import pendulum
 import requests
 import os
-
-from airflow.sdk import dag, task 
+import pandas as pd
 
 logger = logging.getLogger(__name__) #Faz logging do módulo em que está inserido
 
@@ -17,14 +17,14 @@ config_task = {
 }
 
 @dag(
-    dag_id="hello_energia",  #Identificador do DAG
+    dag_id="ONS_energia",  #Identificador do DAG
     default_args=config_task,     #Configuração das tasks do DAG
     start_date=pendulum.datetime(2026, 1, 1, tz="UTC"),    #Data de início do DAG - confirmar qual a melhor escolha sobre
     schedule="@daily",     #Quando o DAG será executado
     catchup=False,        #tasks que não foram executadas no passado não serão executadas
 
 )
-def hello_energia():
+def extracao_dadosONS():
 
     @task(
         task_id="extrair_dados", #Identificador da task
@@ -51,75 +51,43 @@ def hello_energia():
 
 
     @task(
-        task_id="carregar_dados", #Identificador da task
+        task_id="carregar_dados", #Identificador da task 
     )
-    def carregar_dados():
-        return [
-        {
-            "subsitemas": "SE/CO",
-            "hidraulico": 35000, "termico": 15000, "eolica": 5000, "solar": 2000
-        },
-        {
-            "subsitemas": "NE",
-            "hidraulico": 25000, "termico": 10000, "eolica": 3000, "solar": 1500
-        },
-        {
-            "subsitemas": "N",
-            "hidraulico": 15000, "termico": 5000, "eolica": 2000, "solar": 1000
-        },
-        {
-            "subsitemas": "S",
-            "hidraulico": 20000, "termico": 8000, "eolica": 4000, "solar": 2500
-        }
-    ]
+    def carregar_dados(ds, caminho_arquivo): # data de execução extrai o ano da execução do DAG, por isso o parâmetro ds[:4] é passado para a função carregar_dados
+        logger.info("iniciando a carga dos dados do ONS") #log de início da carga dos dados do ONS
+        df = pd.read_csv(caminho_arquivo, sep=";" , encoding="utf-8") #Lê o arquivo CSV do ONS e armazena em um DataFrame do Pandas
+        logger.info(df.head()) #Exibe as 5 primeiras linhas do DataFrame apenas para confimar se foi realizado a leitura correta do arquivo CSV
+
+        df['din_instante'] = pd.to_datetime(df['din_instante']) #converte a coluna din_instante para o formato datetime
+        df['din_instante'] = df['din_instante'].dt.tz_localize('America/Sao_Paulo') #confirmar formato que a coluna já vem de padrão, se já vem com fuso horário ou não, caso não venha, será necessário adicionar o fuso horário de São Paulo
+        df['din_instante'] = df['din_instante'].dt.tz_convert('UTC') #converte a coluna din_instante para o formato datetime e para o fuso horário UTC
+        logger.info(f"Confirmação de que a coluna din_instante está no formato UTC: {df['din_instante'].head()}") #Log de confirmação de que a coluna din_instante está no formato UTC
+
+        logger.info(f"confirmando se ainda tem dados antigos para serem processados, filtrando os dados do dia da execução do DAG") #Log de início da filtragem dos dados do dia da execução do DAG
+        ds_execucao = pd.to_datetime(ds).date() #converte o parâmetro ds para o formato datetime e extrai apenas a data da execucao 
+        df_filtro = df[df['din_instante'].dt.date == ds_execucao] #filtra o DataFrame para pegar apenas os dados do dia da execução do DAG
+        if df_filtro.empty:
+            raise ValueError(f"Não existem dados do dia da execução do DAG: {ds_execucao}") #levanta uma exceção caso não existam dados do dia da execução do DAG
+        else:
+            logger.info(f"Quantidade de dados filtrados do dia da execução do DAG: {len(df_filtro)}") #Log de confirmação da quantidade de dados filtrados do dia da execução do DAG
+            df_filtro['din_instante'] = df_filtro['din_instante'].astype(str) #converte a coluna din_instante para o formato string, para que seja possível retornar o df filtrado para o formato de dicionário
+        return df_filtro.to_dict(orient="records") #retorna o df filtrado para o formato de dicionário, com orient="records" para que cada linha do DataFrame seja um dicionário separado
 
     @task(
-        task_id="processar_dados", #Identificador da task    
-    )
-    def processar_dados(dados_ons):
-        logger.info("iniciando o processamento dos dados do ONS") #Log de início do processamento dos dados do ONS
+        task_id="transformar_dados", #Identificador da task
+    )    
+    def transformacao_dadosONS(df_filtro):
+  
+        df_filtro = pd.DataFrame(df_filtro) #converte o dicionário de volta para o df do Pandas
+        df_filtro['val_geracao_total'] = df_filtro[['val_gerhidraulica', 'val_gertermica', 'val_gereolica', 'val_gersolar']].sum(axis=1) #sama dos valores geral 
+        df_filtro ['val_geracao_renovavel']= df_filtro[['val_gerhidraulica', 'val_gersolar', 'val_gereolica']].sum(axis=1) #soma dos valores renovaveis 
+        df_medias = df_filtro.groupby('nom_subsistema').agg({'val_geracao_total': 'mean', 'val_geracao_renovavel': 'mean'}).reset_index() #calcula a média dos valores das colunas val_geracao_total e val_geracao_renovavel do DataFrame, agrupando pelos subsistemas existentes
+        df_medias['pct_renovavel'] = (df_medias['val_geracao_renovavel'] / df_medias['val_geracao_total']) * 100  #calcula a porcentagem de geração renovável em relação à geração total
+        logger.info(f"Transformação dos dados do ONS concluída com sucesso")
+        return df_medias.to_dict(orient="records") #retorna o df transformado para o formato de dicionário, com orient="records" para que cada linha do DataFrame seja um dicionário separado
 
-        #List para armazenar os resultados do processamento
-        dados_transformados = []
+    caminho = extrair_dados()
+    dados_filtrados = carregar_dados(caminho_arquivo=caminho)
+    resultado = transformacao_dadosONS(dados_filtrados)
 
-        for dado in dados_ons:
-            sub = dado["subsitemas"] # Acessa o valor do subsistema no dicionário
-            hidraulico = dado ['hidraulico'] # Acessa o valor da energia hidraulica no dicionário
-            termico = dado ['termico'] # Acessa o valor da energia termica no dicionário
-            eolica = dado ['eolica'] # Acessa o valor da energia eolica no dicionário
-            solar = dado ['solar'] # Acessa o valor da energia solar no dicionário
-
-            #Calcula a energia total do subsistema
-            total = hidraulico + termico + eolica + solar
-            #Calculo energia renovavel do subsistema
-            if total > 0:
-                renovavel = hidraulico + eolica + solar
-                pct_renovavel = (renovavel / total) * 100
-            else:
-                pct_renovavel = 0.0
-
-            logger.info(f"Subsistemas {sub} processado: Total={total}MW, Renovável={pct_renovavel}%") 
-            dados_transformados.append({  # adiciona os dados transformados à lista
-                "subsistema": sub,         #adiciona o valor do subsistema ao dicionário
-                "total": total,             #Adiciona o valor da energia total ao dicionário
-                "porcentagem_renovavel": pct_renovavel  
-            })
-        logger.info("Processamento dos dados do ONS concluído com sucesso") #Log de conclusão do processamento dos dados do ONS
-
-        return dados_transformados
-    @task(
-        task_id="salvar_dados", #Identificador da task
-    )
-    def salvar_dados(dados_transformados):
-        logger.info("iniciando a gravação dos dados transformados") #Log de início da gravação dos dados transformados
-        for registro in dados_transformados:
-            sub = registro["subsistema"] # Acessa o valor do subsistema no dicionário
-            total = registro["total"] # Acessa o valor da energia total no dicionário
-            pct_renovavel = registro["porcentagem_renovavel"] # Acessa o valor da porcentagem de energia renovável no dicionário
-
-            logger.info(f"Subsistemas {sub}: Total={total}MW, Renovável={pct_renovavel}%") #Log dos dados transformados
-    caminho_csv = extrair_dados()
-    dados_ons = carregar_dados() #Chama a task carregar_dados
-    dados_transformados = processar_dados(dados_ons) #Chama a task processar_dados
-    salvar_dados(dados_transformados) #Chama a task salvar_dados    
-hello_energia()
+extracao_dadosONS()
