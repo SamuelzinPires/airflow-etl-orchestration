@@ -1,14 +1,17 @@
+#importações de bibliotecas necessárias para o funcionamento do DAG
 from __future__ import annotations
 from airflow.sdk import dag, task 
-
+#importações para o funcionamento da extracao e transformação dos dados do ONS
 import logging
 import pendulum
 import requests
 import os
 import pandas as pd
+#import para conferencia dos dados
+import pandera as pa 
+from pandera import Column, DataFrameSchema, Check
 
 logger = logging.getLogger(__name__) #Faz logging do módulo em que está inserido
-
 
 # Configuração das taks do DAG
 config_task = {
@@ -49,7 +52,6 @@ def extracao_dadosONS():
      logger.info(f"Arquivo {name_arquivo} salvo com sucesso em {caminho_arquivo}") #Log de sucesso na gravação do arquivo
      return caminho_arquivo #Retorna o caminho do arquivo salvo
 
-
     @task(
         task_id="carregar_dados", #Identificador da task 
     )
@@ -85,9 +87,49 @@ def extracao_dadosONS():
         df_medias['pct_renovavel'] = (df_medias['val_geracao_renovavel'] / df_medias['val_geracao_total']) * 100  #calcula a porcentagem de geração renovável em relação à geração total
         logger.info(f"Transformação dos dados do ONS concluída com sucesso")
         return df_medias.to_dict(orient="records") #retorna o df transformado para o formato de dicionário, com orient="records" para que cada linha do DataFrame seja um dicionário separado
+    
+    @task(
+        task_id="auditoria_dados" #Identificador da task
+    )
+    def auditoria_colunas(df_medias):
+
+        df_medias = pd.DataFrame(df_medias) #converte o dicionário de volta para o df do Pandas
+
+        #conjuntos de colunas para auditoria
+        nom_subsistema = ['NORTE', 'NORDESTE','SUL', 'SUDESTE/CENTRO-OESTE', 'SISTEMA INTERLIGADO NACIONAL'] #lista de subsistemas existentes no ONS
+        
+        #cria o schema para auditoria
+        schema = DataFrameSchema(
+            columns={
+                "nom_subsistema": Column(
+                    dtype=str,
+                    checks=Check.isin(nom_subsistema), #verifica se os valores da coluna nom_subsistema estão dentro da lista de subsistemas existentes
+                ),
+                "pct_renovavel": Column(
+                    dtype=float,
+                    checks=Check.in_range(0, 100), #verifica se os valores da coluna pct_renovavel estão entre 0 e 100
+                ),
+                "val_geracao_total": Column(
+                    dtype=float,
+                    checks=Check.ge(0), #verifica se os valores da coluna val_geracao_total são maiores ou iguais a 0
+                ),
+                "val_geracao_renovavel": Column(
+                    dtype=float,
+                    checks=Check.ge(0), #verifica se os valores da coluna val_geracao_renovavel são maiores ou iguais a 0
+                ),
+            }
+        )
+        try:
+            schema.validate(df_medias, lazy=True) #valida o DataFrame com base no schema criado acima
+            logger.info(f"Auditoria das colunas do DataFrame concluída com sucesso")
+        except pa.errors.SchemaErrors as erro: 
+            logger.error(f"Erro na auditoria das colunas do DataFrame: {erro.failure_cases}") #log de erro caso a auditoria falhe
+            raise ValueError(f"Erro na auditoria das colunas do DataFrame: {erro.failure_cases}") #levanta uma exceção caso a auditoria falhe
 
     caminho = extrair_dados()
-    dados_filtrados = carregar_dados(caminho_arquivo=caminho)
+    dados_filtrados = carregar_dados(caminho_arquivo=caminho )
     resultado = transformacao_dadosONS(dados_filtrados)
+    auditoria_colunas(resultado)
+
 
 extracao_dadosONS()
