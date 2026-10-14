@@ -10,6 +10,9 @@ import pandas as pd
 #import para conferencia dos dados
 import pandera as pa 
 from pandera import Column, DataFrameSchema, Check
+#import para a conexão com o banco de dados
+from airflow.providers.postgres.hooks.postgres import PostgresHook
+import psycopg2
 
 logger = logging.getLogger(__name__) #Faz logging do módulo em que está inserido
 
@@ -126,10 +129,73 @@ def extracao_dadosONS():
             logger.error(f"Erro na auditoria das colunas do DataFrame: {erro.failure_cases}") #log de erro caso a auditoria falhe
             raise ValueError(f"Erro na auditoria das colunas do DataFrame: {erro.failure_cases}") #levanta uma exceção caso a auditoria falhe
 
+    @task(
+        task_id="tabela_geração_dados" #Identificador da task
+    )   
+    def tabela_geracao_dados(df_medias):
+        #Criar uma tabela no banco de dados para armazenar os dados - colocando como PRIMARY KEY a coluna data_execucao e nom_subsistema, para que não haja duplicidade no banco
+        """
+        Cria a tabela de geração de energia no banco de dados.
+        """
+        comando_sql = f"""
+        CREATE TABLE IF NOT EXISTS geracao_diaria (
+        data_execucao DATE NOT NULL,
+        nom_subsistema VARCHAR(40),
+        val_geracao_total NUMERIC(10,4) NOT NULL,
+        val_geracao_renovavel NUMERIC(10,4) NOT NULL,
+        pct_renovavel FLOAT NOT NULL,
+        PRIMARY KEY (data_execucao, nom_subsistema) 
+    );
+    """ 
+        pg_hook = PostgresHook(postgres_conn_id="pipeline_db") #conecta ao banco de dados energia.db
+        db_conn  = pg_hook.get_conn() #cria a conexão com o banco de dados
+        cursor = db_conn .cursor() #cria o cursor para executar comandos SQL
+        logger.info(f"Conexão com o banco de dados criada com sucesso")
+        cursor.execute(comando_sql) #executa o comando SQL para criar a tabela
+        db_conn .commit() #confirma a execução do comando SQL
+        db_conn .close() #fecha a conexão com o banco de dados
+        logger.info(f"Tabela de geração de energia criada com sucesso no banco de dados") #log de sucesso na criação da tabela
+
+    @task(
+        task_id="inserir_dados_tabela" #Identificador da task
+    )
+    def inserir_dados_tabela(df_medias, ds):
+        if not df_medias:
+            raise ValueError("O DataFrame está vazio. Não há dados para inserir na tabela.")
+
+        pg_hook = PostgresHook(postgres_conn_id="pipeline_db") #conecta ao banco de dados energia.db
+        db_conn = pg_hook.get_conn() #cria a conexão com o banco de dados
+        cursor = db_conn.cursor() #cria o cursor para executar comandos SQL
+        comando_sql_delete_date = """
+        DELETE FROM geracao_diaria
+        WHERE data_execucao = %s;"""
+        comando_sql_inserir = """
+        INSERT INTO geracao_diaria (data_execucao, nom_subsistema, val_geracao_total, val_geracao_renovavel, pct_renovavel)
+        VALUES (%s, %s, %s, %s, %s);"""
+        valores_para_inserir = [
+            (ds, linha["nom_subsistema"], linha["val_geracao_total"], linha["val_geracao_renovavel"], linha["pct_renovavel"])
+            for linha in df_medias
+        ]
+        try:
+            cursor.execute(comando_sql_delete_date, (ds,)) #deleta os dados existentes da data especificada
+            cursor.executemany(comando_sql_inserir, valores_para_inserir) #insere os dados novos da data especificada
+            db_conn.commit() #só confirma a transação se o delete E o insert tiverem funcionado
+            logger.info(f"Foram inseridas {len(valores_para_inserir)} linhas na tabela geracao_diaria para a data {ds}")
+        except psycopg2.Error as erro:
+            logger.error(f"Erro ao atualizar a tabela geracao_diaria: {erro}. Realizando rollback.")
+            db_conn.rollback() #desfaz a transação inteira (delete + insert) em caso de qualquer erro
+            raise erro
+        finally:
+            if db_conn and db_conn.closed == 0: #verifica se a conexão com o banco de dados está aberta
+                db_conn.close() #fecha a conexão com o banco de dados
+                logger.info(f"Conexão com o banco de dados fechada com sucesso") #log de sucesso no fechamento da conexão
+
     caminho = extrair_dados()
     dados_filtrados = carregar_dados(caminho_arquivo=caminho )
     resultado = transformacao_dadosONS(dados_filtrados)
-    auditoria_colunas(resultado)
-
+    resultado_auditado = auditoria_colunas(resultado)
+    tabela_geracao_dados(resultado)
+    resultado_inserido = inserir_dados_tabela(resultado)
+    resultado_auditado >> resultado_inserido
 
 extracao_dadosONS()
