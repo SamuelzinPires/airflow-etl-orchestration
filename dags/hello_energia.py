@@ -1,17 +1,13 @@
-#importações de bibliotecas necessárias para o funcionamento do DAG
 from __future__ import annotations
 from airflow.sdk import dag, task 
-#importações para o funcionamento da extracao e transformação dos dados do ONS
+from pandera import Column, DataFrameSchema, Check
+from airflow.providers.postgres.hooks.postgres import PostgresHook
 import logging
 import pendulum
 import requests
 import os
 import pandas as pd
-#import para conferencia dos dados
 import pandera as pa 
-from pandera import Column, DataFrameSchema, Check
-#import para a conexão com o banco de dados
-from airflow.providers.postgres.hooks.postgres import PostgresHook
 import psycopg2
 
 logger = logging.getLogger(__name__) #Faz logging do módulo em que está inserido
@@ -25,9 +21,10 @@ config_task = {
 @dag(
     dag_id="ONS_energia",  #Identificador do DAG
     default_args=config_task,     #Configuração das tasks do DAG
-    start_date=pendulum.datetime(2026, 1, 1, tz="UTC"),    #Data de início do DAG - confirmar qual a melhor escolha sobre
+    start_date=pendulum.datetime(2026, 1, 1, 0, 0, 0, tz="UTC"),    #Data de início do DAG - confirmar qual a melhor escolha sobre
     schedule="@daily",     #Quando o DAG será executado
-    catchup=False,        #tasks que não foram executadas no passado não serão executadas
+    catchup=True,        #tasks que não foram executadas no passado serão executadas
+    max_active_runs=5,  #Número máximo de execuções simultâneas do dag
 
 )
 def extracao_dadosONS():
