@@ -191,7 +191,7 @@ def extracao_dadosONS():
     dados_filtrados = carregar_dados(caminho_arquivo=caminho )
     resultado = transformacao_dadosONS(dados_filtrados)
     resultado_auditado = auditoria_colunas(resultado)
-    tabela_geracao_dados(resultado)
+    tabela_geracao_dados(resultado) >> resultado_auditado
     resultado_inserido = inserir_dados_tabela(resultado)
     resultado_auditado >> resultado_inserido
 
