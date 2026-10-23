@@ -1,0 +1,25 @@
+name: Testes
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar o código do repositório
+        uses: actions/checkout@v4
+
+      - name: Construir a imagem do projeto
+        run: docker build -t airflow-etl-teste .
+
+      - name: Rodar os testes dentro da imagem
+        run: >
+          docker run --rm
+          -e AIRFLOW__CORE__LOAD_EXAMPLES=false
+          -v ${{ github.workspace }}/dags:/opt/airflow/dags
+          -v ${{ github.workspace }}/tests:/opt/airflow/tests
+          airflow-etl-teste
+          python -m pytest /opt/airflow/tests -v

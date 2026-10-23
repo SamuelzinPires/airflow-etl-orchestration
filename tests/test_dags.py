@@ -54,3 +54,35 @@ def test_ons_energia_dependencias(dagbag, upstream, downstream):
         f"{downstream} deveria rodar depois de {upstream}"
     )
 
+
+@pytest.fixture(scope="module")
+def transformar(dagbag):
+    return dagbag.dags["ONS_energia"].get_task("transformar_dados").python_callable
+
+
+def linha(subsistema, hidraulica=0, termica=0, eolica=0, solar=0):
+    return {
+        "nom_subsistema": subsistema,
+        "val_gerhidraulica": hidraulica,
+        "val_gertermica": termica,
+        "val_gereolica": eolica,
+        "val_gersolar": solar,
+    }
+
+
+def test_pct_renovavel_agrega_antes_de_calcular_o_percentual(transformar):
+    # linha A: 100% renovável (total 100); linha B: 0% renovável (total 300)
+    resultado = transformar([linha("SUL", hidraulica=100), linha("SUL", termica=300)])
+    assert len(resultado) == 1
+    # médias: renovável 50 / total 200 = 25%. Média dos percentuais daria 50%, que seria errado
+    assert resultado[0]["pct_renovavel"] == pytest.approx(25.0)
+
+
+def test_pct_renovavel_gera_um_registro_por_subsistema(transformar):
+    resultado = transformar([
+        linha("SUL", hidraulica=50, termica=50),
+        linha("NORTE", eolica=30, solar=10, termica=60),
+    ])
+    pct = {r["nom_subsistema"]: r["pct_renovavel"] for r in resultado}
+    assert pct == pytest.approx({"SUL": 50.0, "NORTE": 40.0})
+
