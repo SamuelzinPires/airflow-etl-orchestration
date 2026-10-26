@@ -12,7 +12,7 @@ import psycopg2
 
 logger = logging.getLogger(__name__) #Faz logging do módulo em que está inserido
 
-# Configuração das taks do DAG
+# Configuração das tasks do DAG
 config_task = {
     "retries": 3,   #número de tentativas de execução da task em caso de falha
     "retry_delay": pendulum.duration(minutes=5),    #tempo de espera entre as tentativas de execução da task
@@ -21,7 +21,7 @@ config_task = {
 @dag(
     dag_id="ONS_energia",  #Identificador do DAG
     default_args=config_task,     #Configuração das tasks do DAG
-    start_date=pendulum.datetime(2026, 1, 1, 0, 0, 0, tz="UTC"),    #Data de início do DAG - confirmar qual a melhor escolha sobre
+    start_date=pendulum.datetime(2026, 1, 1, 0, 0, 0, tz="UTC"),    #Início em 01/01/2026 (primeira data do CSV), em UTC: uma convenção de fuso só, do agendamento à carga, evita carregar o dia errado
     schedule="@daily",     #Quando o DAG será executado
     catchup=True,        #tasks que não foram executadas no passado serão executadas
     max_active_runs=5,  #Número máximo de execuções simultâneas do dag
@@ -61,7 +61,7 @@ def extracao_dadosONS():
         logger.info(df.head()) #Exibe as 5 primeiras linhas do DataFrame apenas para confimar se foi realizado a leitura correta do arquivo CSV
 
         df['din_instante'] = pd.to_datetime(df['din_instante']) #converte a coluna din_instante para o formato datetime
-        df['din_instante'] = df['din_instante'].dt.tz_localize('America/Sao_Paulo') #confirmar formato que a coluna já vem de padrão, se já vem com fuso horário ou não, caso não venha, será necessário adicionar o fuso horário de São Paulo
+        df['din_instante'] = df['din_instante'].dt.tz_localize('America/Sao_Paulo') #o CSV vem sem fuso horário: assume horário de São Paulo e só depois converte para UTC (próxima linha)
         df['din_instante'] = df['din_instante'].dt.tz_convert('UTC') #converte a coluna din_instante para o formato datetime e para o fuso horário UTC
         logger.info(f"Confirmação de que a coluna din_instante está no formato UTC: {df['din_instante'].head()}") #Log de confirmação de que a coluna din_instante está no formato UTC
 
