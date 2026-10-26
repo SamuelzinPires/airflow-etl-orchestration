@@ -1,6 +1,6 @@
 # Pipeline ETL de Energia com Apache Airflow
 
-![Testes](https://github.com/SamuelzinPires/airflow-etl-orchestration/actions/workflows/testes.yml/badge.svg)
+![Testes](https://github.com/SamuelzinPires/airflow-etl-orchestration_ONS/actions/workflows/testes.yml/badge.svg)
 
 Pipeline de dados orquestrado com **Apache Airflow 3**: extrai o balanço de energia por subsistema do
 **ONS** (Operador Nacional do Sistema Elétrico), valida a qualidade com **Pandera** e carrega num
